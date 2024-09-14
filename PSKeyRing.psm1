@@ -1,17 +1,20 @@
 # Implement your module commands in this script.
 class KRCredential {
+    [string]$Name
     [string]$UserName
-    [string]$EncryptedPassword
+    hidden [string]$EncryptedPassword
     [string]$Domain=[string]::Empty
 
-    KRCredential([string]$user, [System.Security.SecureString]$pass, [byte[]]$key){
-        $this.UserName = $user
-        $this.EncryptedPassword = $pass | ConvertFrom-SecureString -Key $key
+    KRCredential([string]$name, [PSCredential]$credential, [byte[]]$key){
+        $this.Name = $name
+        $this.UserName = $credential.UserName
+        $this.EncryptedPassword = $credential.Password | ConvertFrom-SecureString -Key $key
     }
 
-    KRCredential([string]$user, [System.Security.SecureString]$pass, [byte[]]$key, [string]$domain_url){
-        $this.UserName = $user
-        $this.EncryptedPassword = $pass | ConvertFrom-SecureString -Key $key
+    KRCredential([string]$name, [PSCredential]$credential, [byte[]]$key, [string]$domain_url){
+        $this.Name = $name
+        $this.UserName = $credential.UserName
+        $this.EncryptedPassword = $credential.Password | ConvertFrom-SecureString -Key $key
         $this.Domain = $domain_url
     }
 
@@ -24,6 +27,10 @@ class KRCredential {
         $UnsecurePassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR) | Out-Null
         return $UnsecurePassword
+    }
+
+    [pscredential] GetCredential([byte[]]$key){
+        return [pscredential]::new($this.UserName, $this.GetSecurePassword())
     }
 
 }
@@ -67,7 +74,7 @@ class KeyRing {
         $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
         $buffer = New-Object byte[] $this.ByteLength
         $random.GetBytes($buffer)
-        $random | Set-Content $this.KeyPath
+        $buffer | Set-Content $this.KeyPath
     }
 
     hidden [void] ImportKey(){
@@ -78,7 +85,18 @@ class KeyRing {
         $this | Select-Object -Property Name, Path, ByteLength, KeyPath, Credentails | ConvertTo-Json | Set-Content $this.Path
     }
 
-    [void] AddCredential([KRCredential]$krCred){
+    [bool] CredentailExists([string]$name){
+        if($this.Credentails.Count -gt 0){
+            return $name -in ($this.Credentails | ForEach-Object{$_.Name})
+        }else{
+            return $false
+        }
+    }
+
+    [void] AddKRCredential([KRCredential]$krCred){
+        if($this.CredentailExists($krCred.Name)){
+            throw [System.Management.Automation.MethodInvocationException] "Credentail already exists for name $($krCred.Name)"
+        }
         $this.Key.Add($krCred) | Out-Null
     }
 
@@ -128,8 +146,57 @@ function New-KeyRing {
     }
 }
 
+function Add-KRCredential {
+    [CmdletBinding()]
+    param (
+        # Parameter help description
+        [Parameter(Mandatory, ValueFromPipeline=$true)]
+        [KeyRing]
+        $KeyRing,
+        # Parameter help description
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrWhiteSpace()]
+        [string]
+        $Name,
+        # Parameter help description
+        [Parameter(Mandatory)]
+        [pscredential]
+        $Credentail,
+        # Parameter help description
+        [Parameter(Mandatory=$false)]
+        [string]
+        $Domain_URL
+    )
+
+    begin {
+
+    }
+
+    process {
+        if($Domain_URL){
+            $krCred = [KRCredential]::new($Name, $Credentail, $KeyRing.Key, $Domain_URL)
+        }else{
+            $krCred = [KRCredential]::new($Name, $Credentail, $KeyRing.Key)
+        }
+        $KeyRing.AddKRCredential($krCred)
+    }
+
+    end {
+
+    }
+}
 
 # Export only the functions using PowerShell standard verb-noun naming.
 # Be sure to list each exported functions in the FunctionsToExport field of the module manifest file.
 # This improves performance of command discovery in PowerShell.
 Export-ModuleMember -Function *-*
+
+
+$keydir = "C:\Users\roder\Code\keys"
+$kr = New-KeyRing -Name "TestKR" -ByteLength 32 -KeyDirectory $keydir
+
+$username = 'Username'
+$password = 'Password' | ConvertTo-SecureString -AsPlainText -Force
+$credential = [PSCredential]::New($username,$password)
+
+$krCred = [KRCredential]::new($credential, $kr.Key)
