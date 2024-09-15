@@ -18,6 +18,13 @@ class KRCredential {
         $this.Domain = $domain_url
     }
 
+    KRCredential($credObj){
+        $this.Name = $credObj.Name
+        $this.UserName = $credObj.UserName
+        $this.EncryptedPassword = $credObj.EncryptedPassword
+        $this.Domain = $credObj.Domain
+    }
+
     [System.Security.SecureString] GetSecurePassword([byte[]]$key){
         return ($this.EncryptedPassword | ConvertTo-SecureString -Key $key)
     }
@@ -42,7 +49,7 @@ class KeyRing {
     [int]$ByteLength
     [string]$KeyPath
     [byte[]]$Key
-    [System.Collections.Generic.List[KRCredential]]$Credentails
+    $Credentails
 
     KeyRing([string]$name, [string]$projDir, [int]$byteLength, [string]$keyDir){
         $this.Name = $name
@@ -61,10 +68,12 @@ class KeyRing {
         $this.Path = $keyRingPath
         $this.ByteLength = $obj.ByteLength
         $this.KeyPath = $obj.KeyPath
-        if($obj.Credentails.Count -gt 0){
-            $this.Credentails = $obj.Credentails
-        }else{
+        if($null -eq $obj.Credentails -or $this.Credentails.Count -lt 1){
             $this.Credentails = New-Object System.Collections.Generic.List[KRCredential]
+        }else{
+            $obj.Credentails | ForEach-Object {
+                $this.AddKRCredential([KRCredential]::new($_)) | Out-Null
+            }
         }
         $this.ImportKey()
 
@@ -97,7 +106,7 @@ class KeyRing {
         if($this.CredentailExists($krCred.Name)){
             throw [System.Management.Automation.MethodInvocationException] "Credentail already exists for name $($krCred.Name)"
         }
-        $this.Key.Add($krCred) | Out-Null
+        $this.Credentails.Add($krCred)| Out-Null
     }
 
 
@@ -150,8 +159,7 @@ function Add-KRCredential {
     [CmdletBinding()]
     param (
         # Parameter help description
-        [Parameter(Mandatory, ValueFromPipeline=$true)]
-        [KeyRing]
+        [Parameter(Mandatory)]
         $KeyRing,
         # Parameter help description
         [Parameter(Mandatory)]
@@ -161,11 +169,15 @@ function Add-KRCredential {
         # Parameter help description
         [Parameter(Mandatory)]
         [pscredential]
-        $Credentail,
+        $Credential,
         # Parameter help description
         [Parameter(Mandatory=$false)]
         [string]
-        $Domain_URL
+        $Domain_URL,
+        # Parameter help description
+        [Parameter(Mandatory=$false)]
+        [switch]
+        $SaveKeyRing
     )
 
     begin {
@@ -174,11 +186,14 @@ function Add-KRCredential {
 
     process {
         if($Domain_URL){
-            $krCred = [KRCredential]::new($Name, $Credentail, $KeyRing.Key, $Domain_URL)
+            $krCred = [KRCredential]::new($Name, $Credential, $KeyRing.Key, $Domain_URL)
         }else{
-            $krCred = [KRCredential]::new($Name, $Credentail, $KeyRing.Key)
+            $krCred = [KRCredential]::new($Name, $Credential, $KeyRing.Key)
         }
         $KeyRing.AddKRCredential($krCred)
+        if($SaveKeyRing){
+            $KeyRing.ExportKeyRing()
+        }
     }
 
     end {
@@ -199,4 +214,4 @@ $username = 'Username'
 $password = 'Password' | ConvertTo-SecureString -AsPlainText -Force
 $credential = [PSCredential]::New($username,$password)
 
-$krCred = [KRCredential]::new($credential, $kr.Key)
+Add-KRCredential -KeyRing $kr -Name "TestCredentail" -Credential $credential -SaveKeyRing
