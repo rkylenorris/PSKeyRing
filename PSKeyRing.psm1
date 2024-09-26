@@ -86,6 +86,26 @@ class KeyRing {
         $buffer | Set-Content $this.KeyPath
     }
 
+    [void] RotateKey($byteLength=$this.ByteLength, $newKeyDir=[string]::Empty){
+        if($newKeyDir -eq [string]::Empty){
+            $newKeyDir = [System.IO.Path]::GetDirectoryName($this.KeyPath)
+        }
+        $this.KeyPath = Join-Path $newKeyDir "$($this.Name).key"
+        if(Test-Path $this.KeyPath){
+            Remove-Item $this.KeyPath
+        }
+        $this.ImportKey()
+        $oldkey = $this.Key
+        $this.CreateKey()
+        $this.ImportKey()
+
+        $this.Credentails.ForEach({
+            $_.EncryptedPassword = $_.GetSecurePassword($oldkey) | ConvertFrom-SecureString -Key $KeyRing.Key
+        })
+
+        $this.ExportKeyRing()
+    }
+
     hidden [void] ImportKey(){
         $this.Key = [byte[]](Get-Content $this.KeyPath)
     }
